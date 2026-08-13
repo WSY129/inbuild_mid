@@ -1,10 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+load_dotenv()
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 from passlib.context import CryptContext
 from database import init_db
+from auth import create_access_token, get_current_user_id
 import sqlite3
 
 app = FastAPI()
@@ -99,4 +102,5 @@ def login(req: LoginRequest):
     if not pwd_context.verify(req.password, stored_hashed_pw):
         raise HTTPException(status_code=400, detail="비밀번호가 일치하지 않습니다")
 
-    return {"success": True, "id": req.id}
+    access_token = create_access_token(user_id=req.id)
+    return {"success": True, "accessToken": access_token}
