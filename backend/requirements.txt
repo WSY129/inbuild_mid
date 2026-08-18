@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+httpx
+pydantic
+pydantic-settings
+python-dotenv
+pyjwt   # 회원가입팀이 발급한 accessToken 검증용 (그쪽도 같은 라이브러리를 쓴다)
+# 예측 모델 의존성.
+# ⚠️ 버전을 고정한다. Holt-Winters 최적화가 경계해(alpha=1, gamma=0)에 수렴해서
+#    라이브러리 버전이 바뀌면 예측값이 크게 흔들린다 (O형에서 최대 973유닛 차이 확인).
+#    같은 버전 안에서는 결정적이므로, 올릴 때는 예측값 변화를 반드시 확인할 것.
+numpy==2.5.2
+pandas==3.0.5
+scipy==1.18.0
+statsmodels==0.14.6
