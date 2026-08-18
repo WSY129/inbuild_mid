@@ -26,8 +26,9 @@ backend/
 │   │   └── settings_schema.py               # 설정 화면 요청/응답 스키마
 │   ├── services/
 │   │   ├── user_repository.py               # blood_link.db의 users 테이블 읽기 전용 조회
-│   │   ├── auth.py                          # 현재 사용자 식별 (X-User-Id 헤더, 토큰 아님 - 위 주의사항 참고)
-│   │   └── ai_client.py                     # AI팀 혈액 예측 모델 연동 (현재는 더미 응답)
+│   │   ├── auth.py                          # 현재 사용자 식별 (accessToken(JWT) 서명 검증)
+│   │   ├── ai_client.py                     # AI팀 혈액 예측 모델 연동 (blood_predictor 호출 + 응답 가공)
+│   │   └── blood_predictor.py               # AI팀 Holt-Winters 모델 포팅 (app/data/ CSV로 보유량 예측)
 │   └── routers/
 │       ├── home/
 │       │   └── get_home.py                  # [버튼: 홈 화면 진입] GET /home
@@ -87,9 +88,13 @@ Authorization: Bearer <accessToken>
 
 1. ~~**인증을 토큰 기반으로 전환**~~ — 완료. 회원가입팀이 JWT 발급을 붙였고, 이 백엔드도 검증으로 교체했습니다.
 
-2. **AI팀 혈액 예측 모델 연동**
-   - `app/services/ai_client.py`의 `get_blood_prediction()`이 지금은 더미 데이터를 반환
-   - AI팀 자료(코드/API) 오면 이 함수 내부만 실제 호출로 교체하면 됨 (다른 코드는 반환 형식에만 의존)
+2. **AI 예측 — 위험단계 판정 (AI팀 대기)**
+   - 모델 연동은 완료. AI팀 Holt-Winters 모델을 `app/services/blood_predictor.py`로 포팅했고,
+     `app/data/blood_stock_2016_2025.csv`로 실제 보유량 예측이 나옵니다 (결과는 캐싱).
+   - 남은 것: 위험단계(관심/주의/경계/심각) 판정에 **일일소요량 자료**가 필요한데 AI팀이 확보 중입니다.
+     그때까지 `current_status`/`next_status`는 `"판정 보류"`, `risk_probability`는 `0.0` 고정입니다.
+     자료가 오면 `ai_client.py`의 TODO 지점만 교체하면 됩니다.
+   - AI팀 자료가 ABO(A/B/AB/O)만 구분하고 Rh는 구분하지 않아, `rh_type`은 현재 예측값에 반영되지 않습니다.
 
 3. ~~**헌혈 방식 문자열 통일**~~ — 완료. 표기를 통일하는 대신 이쪽에서 흡수하기로 했습니다.
    `get_home.py`의 `resolve_donation_interval_days()`가 공백과 `성분헌혈` 접미사를 무시하고
