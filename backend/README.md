@@ -1,6 +1,7 @@
 # 헌혈 예측 알림 서비스 — 홈/설정 백엔드 (FastAPI)
 
-회원가입/로그인은 다른 팀(`inbuild_mid` 레포)이 이미 구현했고, 이 백엔드는 **홈 화면**과 **설정 화면**만 담당합니다.
+회원가입/로그인은 다른 팀(`inbuild_mid` 레포)이 이미 구현했고, 이 백엔드는 **홈 화면**, **설정 화면**,
+**헌혈 내역 기록**, **미션/등급**을 담당합니다.
 사용자 프로필(닉네임, 혈액형, 헌혈이력 등)은 회원가입팀의 `blood_link.db`(SQLite)를 **직접 공유해서 읽기 전용으로 조회**합니다.
 
 > ⚠️ **배포 시 반드시 확인**
@@ -10,35 +11,53 @@
 
 ## 구조
 
-버튼(화면 액션) 하나당 파일 하나 원칙으로 구성했습니다.
+버튼(화면 액션) 하나당 라우터 파일 하나, 그 라우터가 쓰는 로직은 `services/`,
+데이터 계약은 `schemas/`, 테이블 정의는 `models/`로 나누는 원칙으로 구성했습니다.
 
 ```
 backend/
 ├── app/
 │   ├── main.py                              # 앱 엔트리포인트, 라우터 등록
 │   ├── config.py                            # 환경변수 (회원가입/AI API 주소, DB 경로)
-│   ├── database.py                          # SQLite 엔진/세션
+│   ├── database.py                          # 이 백엔드 자체 SQLite 엔진/세션 (home_settings.db)
 │   ├── models/
-│   │   └── user_settings.py                 # 알림 설정 DB 모델 (이 백엔드가 직접 관리하는 유일한 테이블)
+│   │   ├── user_settings.py                 # 알림 설정 테이블
+│   │   ├── donation_record.py               # 헌혈 내역 기록 테이블
+│   │   └── mission_progress.py              # 미션 클레임 이력 / 누적 EXP 테이블
 │   ├── schemas/
-│   │   ├── user.py                          # 회원가입팀 API 응답 스키마
+│   │   ├── user.py                          # blood_link.db users 테이블 매핑 스키마
 │   │   ├── home.py                          # 홈 화면 응답 스키마
-│   │   └── settings_schema.py               # 설정 화면 요청/응답 스키마
+│   │   ├── settings_schema.py               # 설정 화면 요청/응답 스키마
+│   │   ├── donation_record.py               # 헌혈 내역 기록 요청/응답 스키마
+│   │   └── mission.py                       # 미션/등급 응답 스키마
 │   ├── services/
-│   │   ├── user_repository.py               # blood_link.db의 users 테이블 읽기 전용 조회
+│   │   ├── user_repository.py               # blood_link.db의 users 테이블 읽기 전용 조회 (mode=ro)
 │   │   ├── auth.py                          # 현재 사용자 식별 (accessToken(JWT) 서명 검증)
+│   │   ├── rate_limit.py                    # 쓰기 API 남용 방지용 인메모리 rate limiter
+│   │   ├── donation_method.py               # 헌혈 방식 문자열 판정 (표기 차이 흡수) — 여러 곳에서 공용
+│   │   ├── donation_repository.py           # donation_records 테이블 조회/저장
+│   │   ├── mission_rules.py                 # 미션·등급 기준 상수 (엑셀 정의표를 코드로 옮김)
+│   │   ├── mission_service.py               # 미션 진행도/등급 계산 로직
 │   │   ├── ai_client.py                     # AI팀 혈액 예측 모델 연동 (blood_predictor 호출 + 응답 가공)
-│   │   └── blood_predictor.py               # AI팀 Holt-Winters 모델 포팅 (app/data/ CSV로 보유량 예측)
+│   │   ├── blood_predictor.py               # 예측 실행 래퍼 (app/data/ CSV 적재·검증 + 28일 예측 캐싱)
+│   │   └── calendar_model.py                # AI팀 달력 회귀 모델 본체 — 원본 사본, 직접 수정 금지
 │   └── routers/
 │       ├── home/
 │       │   └── get_home.py                  # [버튼: 홈 화면 진입] GET /home
-│       └── settings/
-│           ├── _shared.py                   # 버튼 파일들이 공유하는 헬퍼 (라우터 아님)
-│           ├── get_settings.py               # [버튼: 설정 화면 진입] GET /settings
-│           ├── update_notification_toggle.py # [버튼: 전체 알림 수신 토글] PATCH /settings/notification
-│           ├── update_sensitivity.py         # [버튼: 알림 민감도 드롭다운] PATCH /settings/sensitivity
-│           ├── update_frequency.py           # [버튼: 알람 수신 주기 드롭다운] PATCH /settings/frequency
-│           └── update_resend_count.py        # [버튼: 재수신 횟수 드롭다운] PATCH /settings/resend-count
+│       ├── settings/
+│       │   ├── _shared.py                   # 버튼 파일들이 공유하는 헬퍼 (라우터 아님)
+│       │   ├── get_settings.py               # [버튼: 설정 화면 진입] GET /settings
+│       │   ├── update_notification_toggle.py # [버튼: 전체 알림 수신 토글] PATCH /settings/notification
+│       │   ├── update_sensitivity.py         # [버튼: 알림 민감도 드롭다운] PATCH /settings/sensitivity
+│       │   ├── update_frequency.py           # [버튼: 알람 수신 주기 드롭다운] PATCH /settings/frequency
+│       │   └── update_resend_count.py        # [버튼: 재수신 횟수 드롭다운] PATCH /settings/resend-count
+│       ├── donations/
+│       │   ├── _shared.py                   # 버튼 파일들이 공유하는 헬퍼 (라우터 아님)
+│       │   ├── get_history.py                # [버튼: 헌혈 내역 조회 화면 진입] GET /donations
+│       │   └── add_history.py                # [버튼: 헌혈 내역 기록 '확인'] POST /donations
+│       └── missions/
+│           ├── get_missions.py               # [버튼: 미션 리스트 화면 진입] GET /missions
+│           └── claim_mission.py              # [버튼: 미션 '완료'] POST /missions/{mission_key}/claim
 ├── requirements.txt
 └── .env.example
 ```
@@ -62,21 +81,30 @@ uvicorn app.main:app --reload --port 8000
 ## 사용자 식별 방식 (JWT)
 
 프론트엔드는 회원가입팀 로그인(`POST /api/auth/login`) 성공 시 받은 `accessToken`을,
-이 백엔드(`/home`, `/settings/*`)를 호출할 때마다 `Authorization` 헤더에 실어 보내면 됩니다.
+이 백엔드(`/home`, `/settings/*`, `/donations`, `/missions/*`)를 호출할 때마다
+`Authorization` 헤더에 실어 보내면 됩니다.
 
 ```
 GET /home
 Authorization: Bearer <accessToken>
 ```
 
-이 백엔드는 토큰 서명을 검증한 뒤 payload의 `sub`(= 로그인 아이디)로
+이 백엔드는 토큰 서명과 만료시간을 검증한 뒤 payload의 `sub`(= 로그인 아이디)로
 `blood_link.db`의 `users` 테이블을 조회합니다 (`app/services/auth.py`, `app/services/user_repository.py`).
+이 조회는 별도 스레드(`asyncio.to_thread`)에서 돌려서, 매 요청마다 발생하는 동기 파일 I/O가
+이벤트 루프를 막지 않도록 합니다. 연결도 `mode=ro`로 열어 이 프로세스가 실수로도
+회원가입팀 DB에 쓰기를 할 수 없게 막아뒀습니다.
+
+인가(Authorization)는 별도 권한 테이블 없이, 모든 라우터가 URL/바디로 받은 값이 아니라
+**항상 이 조회로 얻은 `user.internal_id`로만** 자기 데이터를 조회/수정하는 방식으로 처리합니다.
+그래서 다른 사용자의 헌혈기록·설정·미션에 접근하는 경로 자체가 존재하지 않습니다.
 
 ### 저장 키는 로그인 아이디가 아니라 `users.id`
 
 회원 정보 수정 화면에서 **로그인 아이디는 사용자가 직접 바꿀 수 있습니다.**
-그래서 `user_settings` 테이블의 기본키는 로그인 아이디가 아니라
-변하지 않는 `users.id`(INTEGER PK)를 씁니다. 아이디를 바꿔도 알림 설정이 그대로 따라옵니다.
+그래서 `user_settings`, `donation_records`, `user_exp`, `mission_claims` 테이블의 키는
+로그인 아이디가 아니라 변하지 않는 `users.id`(`SignupUser.internal_id`)를 씁니다.
+아이디를 바꿔도 알림 설정/헌혈기록/미션 진행도가 그대로 따라옵니다.
 
 ### 아이디를 바꾸면 토큰도 갈아끼워야 합니다
 
@@ -84,21 +112,70 @@ Authorization: Bearer <accessToken>
 프론트가 이걸 저장하지 않고 예전 토큰을 계속 쓰면, 서명은 유효하지만 `sub`가 없는 아이디를 가리키게 되어
 이 백엔드가 401 `"존재하지 않는 사용자입니다. 다시 로그인해주세요."`를 돌려줍니다.
 
+## 안정성/보안 관련 방어 로직
+
+멘토 리뷰(홈/설정/헌혈기록/미션 API)를 반영해서 추가한 것들입니다.
+
+- **`/home`이 AI 예측 실패로 통째로 죽지 않습니다.** `get_blood_prediction()` 호출을 try/except로
+  감싸서, 실패하면 예측 관련 필드만 "판정 보류"로 채우고 닉네임/혈액형/D-day는 정상 응답합니다
+  (`app/routers/home/get_home.py`).
+- **헌혈 방식 입력을 검증합니다.** `POST /donations`의 `donation_method`는 여전히 와이어프레임/PRD
+  두 표기를 다 받지만(표기를 하나로 강제 통일하지 않기로 한 기존 결정 유지), `app/services/donation_method.py`가
+  판정할 수 없는 문자열(오타, "모름" 등)은 422로 거부합니다. 위경도도 범위를 검증합니다
+  (`app/schemas/donation_record.py`).
+- **미션 완료 이중 지급을 막습니다.** 계정형 미션은 `mission_claims`에
+  `(user_internal_id, mission_key)` 부분 유니크 인덱스를 걸어서, 같은 미션을 거의 동시에
+  두 번 클레임해도 DB 단에서 하나는 거부되게 했습니다(409로 응답). 앱 레벨의 "이미 클레임했는지"
+  조회만으로는 두 요청이 동시에 통과할 수 있어서 최종 방어선으로 추가했습니다
+  (`app/models/mission_progress.py`, `app/routers/missions/claim_mission.py`).
+  > 기존에 만들어둔 로컬 `home_settings.db`에는 이 인덱스가 자동으로 안 생깁니다
+  > (`create_all`은 없는 테이블만 만들고 기존 테이블은 건드리지 않음). 로컬 DB 파일을
+  > 지우고 다시 띄우거나, 직접 `CREATE UNIQUE INDEX`를 실행해주세요.
+- **쓰기 API에 인메모리 rate limit을 걸었습니다.** `POST /donations`(분당 10회),
+  `POST /missions/{key}/claim`(분당 20회) — 단일 프로세스 배포를 가정한 MVP 수준 방어입니다.
+  여러 워커/서버로 스케일아웃하면 워커별로 카운트가 따로 세지니, 그땐 Redis 등 공유 저장소
+  기반으로 바꿔야 합니다 (`app/services/rate_limit.py`).
+- **설정 최초 생성 시 경쟁 상태를 처리합니다.** 같은 유저의 동시 요청이 둘 다 "설정 없음"으로 보고
+  동시에 insert를 시도해도, 뒤에 커밋 실패한 쪽은 방금 만들어진 행을 다시 읽어옵니다
+  (`app/routers/settings/_shared.py`).
+
 ## 지금 남아있는 TODO
 
 1. ~~**인증을 토큰 기반으로 전환**~~ — 완료. 회원가입팀이 JWT 발급을 붙였고, 이 백엔드도 검증으로 교체했습니다.
 
 2. **AI 예측 — 위험단계 판정 (AI팀 대기)**
-   - 모델 연동은 완료. AI팀 Holt-Winters 모델을 `app/services/blood_predictor.py`로 포팅했고,
-     `app/data/blood_stock_2016_2025.csv`로 실제 보유량 예측이 나옵니다 (결과는 캐싱).
+   - 모델 연동은 완료. AI팀 2차 전달본(달력 회귀)을 붙였습니다. 모델 본체는
+     `app/services/calendar_model.py`에 원본 그대로 두고(직접 수정 금지),
+     `app/services/blood_predictor.py`가 `app/data/blood_stock_2016_2025.csv`를 읽어
+     **28일** 예측을 만듭니다 (결과는 프로세스 단위 캐싱, 전체 4형 약 0.2초).
+   - **Holt-Winters에서 교체했습니다.** 이전 설정이 "어제 값 그대로"(naive) 베이스라인에 졌고,
+     124회 적합 중 53회에서 수렴 경고가 났습니다. 새 모델은 최소제곱 닫힌 해라 반복 최적화가
+     없어서 라이브러리 버전에 따라 결과가 흔들리지 않습니다 — `requirements.txt`의 버전 고정도
+     이때 함께 풀고 `statsmodels`/`scipy`를 뺐습니다(`holidays` 추가).
+   - **응답 스키마가 바뀌었습니다.** horizon이 20일 → 28일이라 `predicted_dates`/`predicted_volumes`
+     길이가 28이 되고, 경보 판정용 `alert_signals` 배열이 새로 나갑니다.
+     프론트는 하락 경보를 점추정이 아니라 `alert_signals`로 판정해야 합니다.
+     이 값은 **신뢰구간이 아닙니다** — 홀드아웃 실측 커버리지가 44~55%라 "95% 확률" 류의
+     문구로 표시하면 안 됩니다.
+   - 정확도가 뒤로 갈수록 떨어집니다. 1~7일은 운영 판단, 8~21일은 경보 발동,
+     22~28일은 추세 참고만(경보 근거로 쓰지 않기). 혈액형별 상대오차 최댓값은 각각
+     5.9% / 13.8% / 15.5%이고 세 구간 모두 A형이 가장 나쁩니다.
    - 남은 것: 위험단계(관심/주의/경계/심각) 판정에 **일일소요량 자료**가 필요한데 AI팀이 확보 중입니다.
+     예측값은 유닛 수이고 판정 기준은 일수라 `보유일수 = 예측 유닛 ÷ 일일소요량` 변환이 필요합니다.
      그때까지 `current_status`/`next_status`는 `"판정 보류"`, `risk_probability`는 `0.0` 고정입니다.
      자료가 오면 `ai_client.py`의 TODO 지점만 교체하면 됩니다.
+     (AI팀에 확인할 것: 일일소요량이 고정 상수인지 날짜별 시계열인지. 시계열이면 28일 뒤
+     소요량도 예측해야 해서 담당 협의가 필요합니다.)
+   - `as_of_date`는 CSV 마지막 실측일(2025-12-31)이라 예측 구간도 그 다음날부터입니다.
+     CSV가 갱신되지 않으면 홈 화면 그래프의 날짜가 과거로 남습니다.
    - AI팀 자료가 ABO(A/B/AB/O)만 구분하고 Rh는 구분하지 않아, `rh_type`은 현재 예측값에 반영되지 않습니다.
+   - 위 두 미션(`blood_type_hero`, `problem_solver`)과 "얼굴없는 구원자"(`faceless_savior`)는
+     위험단계 판정이 나와야 구현 가능합니다 (`app/services/mission_rules.py` 참고).
 
 3. ~~**헌혈 방식 문자열 통일**~~ — 완료. 표기를 통일하는 대신 이쪽에서 흡수하기로 했습니다.
-   `get_home.py`의 `resolve_donation_interval_days()`가 공백과 `성분헌혈` 접미사를 무시하고
-   키워드로 판정하므로, 와이어프레임 표기(`혈소판`)와 PRD 표기(`혈소판성분헌혈`) 둘 다 받습니다.
+   `app/services/donation_method.py`의 `resolve_donation_interval_days()`가 공백과 `성분헌혈` 접미사를
+   무시하고 키워드로 판정하므로, 와이어프레임 표기(`혈소판`)와 PRD 표기(`혈소판성분헌혈`) 둘 다 받습니다.
+   `POST /donations`는 여기에 더해 아예 판정 불가능한 문자열만 422로 거릅니다.
 
 4. **최근 헌혈 날짜 수정 경로 (회원가입팀 대기 — 2026-08-19 수요일 이후 반영 예정)**
    - 와이어프레임 `Set_3`에는 `최근 헌혈 날짜`가 추가됐지만, 회원가입팀의 `UpdateProfileRequest`와
@@ -106,8 +183,15 @@ Authorization: Bearer <accessToken>
    - 이게 들어와야 사용자가 헌혈 후 날짜를 갱신할 수 있고, 홈 화면 D-day가 정확해짐
    - 우리 쪽은 `user_repository.py`가 이미 `last_donation_date`를 읽고 있어서 추가 작업 없음
 
-5. **확인 필요한 가정**
+5. **미션 '알림지기' 계산의 전제**
+   - `notification_enabled_since`가 없어도(가입 후 한 번도 토글 안 한 경우) `created_at`을 시작점으로
+     대신 쓰는데, 이건 "가입 시점부터 알림이 켜져 있었다"는 가정입니다. 실제 기본값 정책이 바뀌면
+     `get_notification_keeper_progress()`(`app/services/mission_service.py`)도 같이 봐야 합니다.
+
+6. **확인 필요한 가정**
    - `last_donation_date` 형식을 `"YYYY-MM-DD"`로 가정함 — 실제 형식이 다르면 `get_home.py`의 `calculate_next_donation_dday()` 파싱 로직 수정 필요
    - `blood_link.db` 파일에 이 백엔드가 읽기 권한으로 접근할 수 있는 배포 구조라고 가정 (같은 서버/컨테이너 또는 공유 볼륨)
    - 회원가입팀이 쓰고 이 백엔드가 읽는 구조가 됐으므로, 동시 접근 시 `database is locked`가 나면
      `PRAGMA journal_mode=WAL` 적용을 회원가입팀과 협의할 것
+   - `rate_limit.py`는 단일 프로세스 기준입니다. 배포를 여러 인스턴스로 늘릴 계획이 있다면
+     그 전에 공유 저장소 기반으로 교체할 것.

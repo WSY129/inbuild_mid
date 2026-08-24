@@ -21,6 +21,7 @@ class UserSettings(Base):
 
     user_internal_id = Column(Integer, primary_key=True, index=True)  # = users.id
     notification_enabled = Column(Boolean, nullable=False, default=True)
+    notification_enabled_since = Column(DateTime(timezone=True), nullable=True)  # 마지막으로 '켬'으로 바뀐 시각. 꺼지면 None (미션 '알림지기' 판정용 - mission_service.py 참고)
     sensitivity = Column(String, nullable=False, default="보통")       # 민감 / 보통 / 둔함
     frequency = Column(String, nullable=False, default="3")            # 1/2/3/7/14/재수신하지않음
     resend_count = Column(Integer, nullable=True, default=3)           # 1~5, frequency가 '재수신하지않음'이면 None

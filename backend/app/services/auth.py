@@ -8,6 +8,8 @@
    사용자가 직접 바꿀 수 있다. 그래서 sub는 사용자를 찾는 용도로만 쓰고,
    설정 데이터의 키로는 절대 쓰지 않는다 (변하지 않는 users.id를 쓴다 - user_settings.py 참고).
 """
+import asyncio
+
 import jwt
 #pyjwt. 회원가입팀 auth.py와 같은 라이브러리/알고리즘(HS256)을 쓴다.
 
@@ -51,7 +53,10 @@ async def get_current_user(
             detail="유효하지 않은 토큰입니다.",
         )
 
-    user = get_user_by_id(login_id)
+    # get_user_by_id는 sqlite3를 동기로 호출한다. get_current_user는 인증된 요청마다
+    # 매번 거치는 경로라, 그대로 await 없이 부르면 그 파일 I/O가 끝날 때까지
+    # 이벤트 루프 전체가 막힌다. 별도 스레드로 돌려서 블로킹을 피한다.
+    user = await asyncio.to_thread(get_user_by_id, login_id)
     if user is None:
         #서명이 유효한데 사용자가 없다 = 아이디를 변경한 뒤 프론트가 새 accessToken으로
         #교체하지 않고 예전 토큰을 계속 쓰고 있는 상황. 404가 아니라 재로그인을 유도한다.

@@ -3,9 +3,10 @@
 버튼 파일 자체는 아니므로 라우터를 등록하지 않음.
 update_어쩌고.py에서 공통으로 쓰는 로직들을 모아둔 파일
 """
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 #session: 파이썬과 DB가 SQL언어 안쓰고 대화하는 통로. DB에 쿼리문을 보내고, 결과를 받아오는 역할
-#db를 session타입으로 받음으로써 db.get, db.add, db.commit, db.refresh 등 session이 제공하는 메서드를 사용할 수 있음 
+#db를 session타입으로 받음으로써 db.get, db.add, db.commit, db.refresh 등 session이 제공하는 메서드를 사용할 수 있음
 
 from app.models.user_settings import UserSettings
 #UserSettings 테이블에 접근하기 위해 import
@@ -20,8 +21,16 @@ def get_or_create_settings(db: Session, user_internal_id: int) -> UserSettings:
     if settings_row is None:
         settings_row = UserSettings(user_internal_id=user_internal_id)
         db.add(settings_row)
-        db.commit()
-        db.refresh(settings_row)    #DB가 채워준 값 최신상태로 파이썬 객체에 반영
+        try:
+            db.commit()
+        except IntegrityError:
+            # 같은 유저의 요청 두 개가 거의 동시에 들어오면 둘 다 "없음"으로 보고
+            # 동시에 insert를 시도할 수 있다 (user_internal_id가 PK라 둘째 커밋이 실패).
+            # 그 경우 방금 다른 요청이 만든 행을 다시 읽어오면 된다.
+            db.rollback()
+            settings_row = db.get(UserSettings, user_internal_id)
+        else:
+            db.refresh(settings_row)    #DB가 채워준 값 최신상태로 파이썬 객체에 반영
     return settings_row
 
 #DB 안의 객체를 SettingsResponse로 변환하는 헬퍼

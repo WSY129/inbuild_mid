@@ -10,6 +10,8 @@ from app.routers.settings import (
     update_frequency,
     update_resend_count,
 )
+from app.routers.donations import get_history, add_history
+from app.routers.missions import get_missions, claim_mission
 
 # 로컬 SQLite 테이블 생성 (알림 설정 등 - 회원가입 정보는 여기서 저장하지 않음)
 Base.metadata.create_all(bind=engine)
@@ -43,6 +45,10 @@ app.include_router(update_notification_toggle.router)
 app.include_router(update_sensitivity.router)
 app.include_router(update_frequency.router)
 app.include_router(update_resend_count.router)
+app.include_router(get_history.router)
+app.include_router(add_history.router)
+app.include_router(get_missions.router)
+app.include_router(claim_mission.router)
 
 
 @app.get("/health", tags=["health"])

@@ -22,7 +22,10 @@ from app.schemas.user import SignupUser
 
 #사용자정보가 없으면 None 반환, 있으면 SignupUser 객체 반환
 def get_user_by_id(user_id: str) -> Optional[SignupUser]:
-    conn = sqlite3.connect(settings.shared_db_path)
+    # 이 백엔드는 blood_link.db에 읽기 전용으로만 접근해야 한다 (쓰기는 회원가입팀 코드가 담당).
+    # mode=ro로 열면 이 프로세스에서 실수로 쓰기 쿼리를 보내도 DB 단계에서 거부되고,
+    # 파일이 없을 때 sqlite3가 빈 DB를 새로 만들어버리는 것도 막을 수 있다.
+    conn = sqlite3.connect(f"file:{settings.shared_db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     #SQLite 조회결과는 기본적으로 튜플로 반환되는데, row_factory를 sqlite3.Row로 설정하면 컬럼명을 키로 갖는 딕셔너리처럼 접근 가능
     try:
