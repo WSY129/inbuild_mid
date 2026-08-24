@@ -87,22 +87,36 @@ def claim_mission(
     if not progress["is_ready_to_claim"]:
         raise HTTPException(status_code=400, detail="아직 조건을 채우지 못했습니다.")
 
-    db.add(MissionClaim(user_internal_id=user.internal_id, mission_key=mission_key))
+    db.add(MissionClaim(
+        user_internal_id=user.internal_id,
+        mission_key=mission_key,
+        evidence_id=progress.get("evidence_id"),  # 반복형만 값이 있음 (mission_progress.py 유니크 제약 참고)
+    ))
 
     user_exp = db.query(UserExp).filter(UserExp.user_internal_id == user.internal_id).first()
     if user_exp is None:
-        user_exp = UserExp(user_internal_id=user.internal_id, total_exp=0)
+        user_exp = UserExp(user_internal_id=user.internal_id, total_exp=mission["exp"])
         db.add(user_exp)
-    user_exp.total_exp += mission["exp"]
+    else:
+        # "읽어서 파이썬에서 더하고 다시 쓰기"(+=) 대신 DB가 원자적으로 계산하게 한다.
+        # 같은 미션 중복 클레임은 위 유니크 제약이 막아주지만, 이 유저가 서로 다른 미션
+        # 두 개를 정확히 동시에 클레임하는 경우는 그 제약에 안 걸리는데, += 방식이면
+        # 두 요청이 같은 옛날 값을 읽어서 한쪽 지급이 덮어써질(유실될) 수 있다.
+        db.query(UserExp).filter(UserExp.user_internal_id == user.internal_id).update(
+            {UserExp.total_exp: UserExp.total_exp + mission["exp"]}
+        )
 
     try:
         db.commit()
     except IntegrityError:
-        # 같은 계정형 미션을 두 요청이 거의 동시에 클레임하면 둘 다 위의 already_claimed
-        # 조회를 통과할 수 있다 - 커밋 시점의 유니크 제약(mission_progress.py 참고)이
-        # 최종 방어선이라 여기서 잡아 409로 돌려준다 (EXP 이중 지급 방지).
+        # 계정형은 같은 미션을, 반복형은 같은 헌혈 기록(evidence_id)을 두 요청이 거의 동시에
+        # 클레임하면 둘 다 위의 already_claimed/진행도 조회를 통과할 수 있다 - 커밋 시점의
+        # 유니크 제약(mission_progress.py 참고)이 최종 방어선이라 여기서 잡아 409로 돌려준다
+        # (EXP 이중 지급 방지).
         db.rollback()
         raise HTTPException(status_code=409, detail="이미 완료한 미션입니다.")
+
+    db.refresh(user_exp)  # 위 원자적 update()는 세션의 user_exp 객체를 자동으로 갱신하지 않는다
 
     return {
         "claimed_mission": mission_key,

@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 sqlalchemy
-httpx
+alembic  # DB 스키마 마이그레이션 (migrations/ 참고)
 pydantic
 pydantic-settings
 python-dotenv

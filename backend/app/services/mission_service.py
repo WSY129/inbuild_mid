@@ -3,7 +3,7 @@
 현재 등급, 다음 등급까지 남은 EXP, 진행률을 계산한다.
 """
 from app.services.mission_rules import GRADE_THRESHOLDS, FINAL_GRADE, MISSIONS, WHOLE_BLOOD_COUNT_MULTIPLIER
-from app.services.donation_method import resolve_donation_interval_days
+from app.services.donation_method import resolve_donation_interval_days, DonationMethodCode
 from datetime import datetime, timedelta, timezone
 
 
@@ -34,15 +34,11 @@ def get_grade_info(total_exp: int) -> dict:
 
 # ── 미션 진행도 계산 (헌혈 기록 기반, 계정형 8개) ──────────────────────────
 
-def _normalize_method(donation_method: str) -> str:
-    return donation_method.replace(" ", "").replace("성분헌혈", "").replace("성분", "")
-
-
 def _donation_count(records) -> int:
     """전혈은 2회로 카운트해서 합산한 총 헌혈 횟수."""
     total = 0
     for r in records:
-        total += WHOLE_BLOOD_COUNT_MULTIPLIER if _normalize_method(r.donation_method) == "전혈" else 1
+        total += WHOLE_BLOOD_COUNT_MULTIPLIER if r.donation_method_code == DonationMethodCode.WHOLE_BLOOD.value else 1
     return total
 
 
@@ -55,7 +51,7 @@ COUNT_BASED_MISSION_KEYS = {
     "unwavering_heart": lambda records: _donation_count(records),
     "selfless_devotion": lambda records: _donation_count(records),
     "wanderer": lambda records: len({r.location_name for r in records}),
-    "all_rounder": lambda records: len({_normalize_method(r.donation_method) for r in records}),
+    "all_rounder": lambda records: len({r.donation_method_code for r in records}),
 }
 
 
@@ -119,6 +115,10 @@ def get_habit_donation_progress(records, last_claimed_at) -> dict:
         new_records = [r for r in records if r.created_at > last_claimed_at]
 
     is_ready = len(new_records) > 0
+    # 증거로 쓸 기록은 id가 가장 작은(가장 먼저 등록된) 새 기록으로 고정한다.
+    # 동시에 들어온 두 요청도 같은 시점에 같은 records를 보므로 항상 같은 기록을 고르게 되고,
+    # 그래야 두 요청이 같은 evidence_id로 커밋을 시도해 DB 유니크 제약(mission_progress.py)이 막아준다.
+    evidence_id = min(new_records, key=lambda r: r.id).id if is_ready else None
     return {
         "key": "habit_donation",
         "name": mission["name"],
@@ -126,6 +126,7 @@ def get_habit_donation_progress(records, last_claimed_at) -> dict:
         "current": 1 if is_ready else 0,
         "target": 1,
         "is_ready_to_claim": is_ready,
+        "evidence_id": evidence_id,
     }
 
 
@@ -145,12 +146,18 @@ def get_steady_heart_progress(records, last_claimed_at) -> dict:
     else:
         candidates = [r for r in records if r.created_at > last_claimed_at]
 
-    dates = sorted(r.donation_date for r in candidates)
+    sorted_candidates = sorted(candidates, key=lambda r: r.donation_date)
+    dates = [r.donation_date for r in sorted_candidates]
 
-    is_ready = any(
-        (dates[i + 2] - dates[i]).days <= 365
-        for i in range(len(dates) - 2)
-    )
+    is_ready = False
+    evidence_id = None
+    for i in range(len(dates) - 2):
+        if (dates[i + 2] - dates[i]).days <= 365:
+            is_ready = True
+            # 조건을 채운(가장 앞에서 발견된) 묶음의 마지막 기록을 증거로 삼는다 - habit_donation과
+            # 같은 이유로, 동시 요청도 같은 candidates를 보는 한 항상 같은 기록을 고른다.
+            evidence_id = sorted_candidates[i + 2].id
+            break
 
     # 3건 이상 있어도 1년 조건을 못 채우면 '3/3'으로 잘못 보이지 않도록 2로 캡핑한다.
     current = 3 if is_ready else min(len(dates), 2)
@@ -162,6 +169,7 @@ def get_steady_heart_progress(records, last_claimed_at) -> dict:
         "current": current,
         "target": 3,
         "is_ready_to_claim": is_ready,
+        "evidence_id": evidence_id,
     }
 
 
@@ -182,6 +190,7 @@ def get_quick_donation_progress(records, last_claimed_at, fallback_donation_date
         fallback_date = datetime.strptime(fallback_donation_date, "%Y-%m-%d").date()
 
     is_ready = False
+    evidence_id = None
     for i, record in enumerate(sorted_records):
         if last_claimed_at is not None and record.created_at <= last_claimed_at:
             continue  # 마지막 클레임 이전에 등록된 기록은 이미 써먹은 것으로 본다
@@ -202,6 +211,7 @@ def get_quick_donation_progress(records, last_claimed_at, fallback_donation_date
         eligible_date = prev_date + timedelta(days=interval)
         if eligible_date <= record.donation_date <= eligible_date + timedelta(days=7):
             is_ready = True
+            evidence_id = record.id  # 조건을 채운 기록 자체를 증거로 삼는다 (동시 요청도 같은 값을 고름)
             break
 
     return {
@@ -211,6 +221,7 @@ def get_quick_donation_progress(records, last_claimed_at, fallback_donation_date
         "current": 1 if is_ready else 0,
         "target": 1,
         "is_ready_to_claim": is_ready,
+        "evidence_id": evidence_id,
     }
 
 

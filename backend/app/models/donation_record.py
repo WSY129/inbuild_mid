@@ -18,7 +18,8 @@ class DonationRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_internal_id = Column(Integer, nullable=False, index=True)  # = blood_link.db의 users.id
-    donation_method = Column(String, nullable=False)  # 전혈 / 혈장성분헌혈 / 혈소판성분헌혈 등 (문자열 그대로 저장, 판정은 app/services/donation_method.py의 키워드 매칭이 담당)
+    donation_method = Column(String, nullable=False)  # 전혈 / 혈장성분헌혈 / 혈소판성분헌혈 등 (원문 라벨 그대로, 화면 표시용)
+    donation_method_code = Column(String, nullable=False)  # DonationMethodCode 값 - 집계/판정용 고정 코드 (donation_method.py 참고)
     donation_date = Column(Date, nullable=False)
     location_name = Column(String, nullable=False)    # 지도에서 선택한 장소의 표시명 (지도 SDK 자체는 프론트 담당)
     latitude = Column(Float, nullable=True)

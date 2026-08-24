@@ -37,6 +37,9 @@ class MissionClaim(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_internal_id = Column(Integer, nullable=False, index=True)
     mission_key = Column(String, nullable=False, index=True)  # mission_rules.MISSIONS의 "key"
+    # 반복형 미션에서 이번 클레임의 조건을 채운 donation_records.id (계정형은 항상 None).
+    # 같은 헌혈 기록을 증거로 두 번 클레임하는 걸 막는 용도 - 아래 uq_repeat_mission_claim_evidence 참고.
+    evidence_id = Column(Integer, nullable=True)
     claimed_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # 계정형 미션(mission_key가 _ACCOUNT_MISSION_KEYS에 속함)에 한해서만
@@ -51,5 +54,16 @@ class MissionClaim(Base):
             "mission_key",
             unique=True,
             sqlite_where=mission_key.in_(_ACCOUNT_MISSION_KEYS),
+        ),
+        # 반복형 미션은 같은 헌혈 기록(evidence_id)으로 같은 미션을 두 번 클레임할 수 없다.
+        # 계정형과 마찬가지로, 두 요청이 거의 동시에 들어와 둘 다 앱 레벨 진행도 조회를
+        # 통과해도(같은 헌혈 기록을 증거로 판단) 커밋 시점에 DB가 하나는 거부한다(claim_mission.py에서 409 처리).
+        Index(
+            "uq_repeat_mission_claim_evidence",
+            "user_internal_id",
+            "mission_key",
+            "evidence_id",
+            unique=True,
+            sqlite_where=mission_key.notin_(_ACCOUNT_MISSION_KEYS),
         ),
     )

@@ -35,15 +35,24 @@ BLOOD_TYPES = ["A", "B", "AB", "O"]
 _cache: Optional[dict] = None
 
 
+class BloodStockDataError(ValueError):
+    """CSV/예측 응답 무결성 검사 실패. python -O로 실행해도(assert가 사라지는 상황) 계속 동작해야
+    하는 데이터 검증이라 assert 대신 명시적으로 예외를 던진다."""
+
+
 def _load_data(path: Path = DATA_PATH) -> pd.DataFrame:
     """CSV를 읽고 기본 무결성을 확인한다. 깨진 입력으로 조용히 예측하지 않기 위함."""
     df = pd.read_csv(path, parse_dates=["date"])
-    assert df["date"].diff()[1:].eq(pd.Timedelta(days=1)).all(), "날짜가 연속이 아님"
-    assert not df[BLOOD_TYPES].isna().any().any(), "혈액형 컬럼에 결측 있음"
-    assert df[BLOOD_TYPES].sum(axis=1).eq(df["total"]).all(), "혈액형 합계가 total과 다름"
+    if not df["date"].diff()[1:].eq(pd.Timedelta(days=1)).all():
+        raise BloodStockDataError("날짜가 연속이 아님")
+    if df[BLOOD_TYPES].isna().any().any():
+        raise BloodStockDataError("혈액형 컬럼에 결측 있음")
+    if not df[BLOOD_TYPES].sum(axis=1).eq(df["total"]).all():
+        raise BloodStockDataError("혈액형 합계가 total과 다름")
     # 곱셈 갈래(Δlog)가 0 이하를 다룰 수 없어 모델 쪽에서도 막지만, 여기서 먼저 걸러
     # 어느 단계에서 깨졌는지 알 수 있게 한다.
-    assert (df[BLOOD_TYPES] > 0).all().all(), "보유량에 0 이하가 있음"
+    if not (df[BLOOD_TYPES] > 0).all().all():
+        raise BloodStockDataError("보유량에 0 이하가 있음")
     return df
 
 
@@ -69,13 +78,18 @@ def _build_response(df: pd.DataFrame) -> dict:
 
 def _validate(response: dict) -> dict:
     """원본 predict.py의 자체 점검. 스키마가 조용히 깨진 채 API로 나가는 것을 막는다."""
-    assert set(response["predictions"]) == set(BLOOD_TYPES)
-    assert all(len(v) == HORIZON for v in response["predictions"].values())
+    if set(response["predictions"]) != set(BLOOD_TYPES):
+        raise BloodStockDataError("예측 응답의 혈액형 구성이 예상과 다름")
+    if not all(len(v) == HORIZON for v in response["predictions"].values()):
+        raise BloodStockDataError(f"예측 응답 길이가 HORIZON({HORIZON})과 다름")
     for bt, rows in response["predictions"].items():
-        assert all(r["alert_signal"] <= r["predicted_stock_quantity"] for r in rows), bt
-        assert all(r["predicted_stock_quantity"] > 0 for r in rows), bt
+        if not all(r["alert_signal"] <= r["predicted_stock_quantity"] for r in rows):
+            raise BloodStockDataError(f"{bt}: alert_signal이 predicted_stock_quantity보다 큼")
+        if not all(r["predicted_stock_quantity"] > 0 for r in rows):
+            raise BloodStockDataError(f"{bt}: predicted_stock_quantity에 0 이하가 있음")
         dates = [pd.Timestamp(r["date"]) for r in rows]
-        assert all((b - a).days == 1 for a, b in zip(dates, dates[1:])), f"{bt} 날짜 불연속"
+        if not all((b - a).days == 1 for a, b in zip(dates, dates[1:])):
+            raise BloodStockDataError(f"{bt}: 날짜 불연속")
     return response
 
 

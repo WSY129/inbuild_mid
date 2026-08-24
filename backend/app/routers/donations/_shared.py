@@ -11,6 +11,7 @@ def to_response(record: DonationRecord) -> DonationRecordResponse:
     return DonationRecordResponse(
         id=record.id,
         donation_method=record.donation_method,
+        donation_method_code=record.donation_method_code,
         donation_date=record.donation_date,
         location_name=record.location_name,
         latitude=record.latitude,

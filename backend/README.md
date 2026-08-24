@@ -72,11 +72,36 @@ cp .env.example .env
 
 # blood_link.db를 이 프로젝트 폴더에 복사하거나, .env의 SHARED_DB_PATH를
 # inbuild_mid 레포의 blood_link.db 절대경로로 지정
+alembic upgrade head   # 이 백엔드 자체 DB(home_settings.db) 테이블/인덱스 생성
 uvicorn app.main:app --reload --port 8000
 ```
 
 - 헬스체크: `GET /health`
+- 준비 상태(공유 DB·AI 예측 데이터 접근 가능 여부): `GET /ready`
 - API 문서(자동 생성): `http://localhost:8000/docs`
+
+## DB 스키마 변경 (Alembic)
+
+이 백엔드 자체 DB(`home_settings.db`)의 테이블/컬럼/인덱스는 [Alembic](https://alembic.sqlalchemy.org/)이 관리한다.
+`app/main.py`는 더 이상 `Base.metadata.create_all()`을 호출하지 않는다 — 그 방식은 없는 테이블만
+만들고 이미 있는 테이블은 안 건드려서, 기존 DB 파일에는 새 컬럼/인덱스가 반영되지 않는 문제가 있었다
+(예: 미션 중복 클레임 방지 인덱스가 로컬 DB에 자동으로 안 생기던 문제 — 지금은 이 방식으로 해결됨).
+
+```bash
+# 모델(app/models/*.py) 변경 후:
+alembic revision --autogenerate -m "설명"   # migrations/versions/에 마이그레이션 파일 생성
+# 생성된 파일을 열어서 확인할 것 - 특히 mission_progress.py의 sqlite_where 부분 유니크
+# 인덱스처럼 SQLite 전용 기능은 autogenerate가 놓칠 수 있어 손으로 보정이 필요할 수 있다.
+alembic upgrade head                        # 로컬 DB에 적용
+
+# 팀원이 새 커밋을 받았을 때(마이그레이션 파일이 추가됐다면):
+alembic upgrade head
+```
+
+SQLite는 컬럼 삭제/제약 변경 등 대부분의 `ALTER TABLE`을 직접 지원하지 않아서, `migrations/env.py`에서
+batch 모드(`render_as_batch=True`)를 켜뒀다 (Alembic이 내부적으로 "새 테이블 생성 → 데이터 복사 →
+교체"로 우회 처리). DB 접속 정보는 `alembic.ini`가 아니라 `app/config.py`(`.env`의 `DATABASE_URL`)를
+그대로 가져다 쓰므로 `.env`만 관리하면 된다.
 
 ## 사용자 식별 방식 (JWT)
 
@@ -119,18 +144,29 @@ Authorization: Bearer <accessToken>
 - **`/home`이 AI 예측 실패로 통째로 죽지 않습니다.** `get_blood_prediction()` 호출을 try/except로
   감싸서, 실패하면 예측 관련 필드만 "판정 보류"로 채우고 닉네임/혈액형/D-day는 정상 응답합니다
   (`app/routers/home/get_home.py`).
+- **`/home`이 잘못된 날짜 형식으로 죽지 않습니다.** D-day 계산에 쓰는 `donation_date`가
+  헌혈 기록이 하나도 없을 때는 회원가입팀 DB(`blood_link.db`)의 검증되지 않은 원시 문자열로
+  폴백되는데, `"YYYY-MM-DD"`가 아니어도 파싱 실패를 잡아 "정보 없음"으로 대체하고 경고 로그만
+  남깁니다 (`app/routers/home/get_home.py`).
+- **`GET /settings`는 조회만 합니다.** 예전에는 설정이 없으면 조회 중에 새 행을 만들었는데,
+  GET에 부작용이 있으면 캐시/재시도/모니터링에서 예측하기 어려워집니다. 이제 행이 없으면
+  DB에 쓰지 않고 기본값만 응답하고, 실제 저장은 사용자가 설정을 하나라도 바꿔 PATCH를
+  호출할 때 일어납니다 (`app/routers/settings/_shared.py`, `app/routers/settings/get_settings.py`).
 - **헌혈 방식 입력을 검증합니다.** `POST /donations`의 `donation_method`는 여전히 와이어프레임/PRD
   두 표기를 다 받지만(표기를 하나로 강제 통일하지 않기로 한 기존 결정 유지), `app/services/donation_method.py`가
   판정할 수 없는 문자열(오타, "모름" 등)은 422로 거부합니다. 위경도도 범위를 검증합니다
   (`app/schemas/donation_record.py`).
 - **미션 완료 이중 지급을 막습니다.** 계정형 미션은 `mission_claims`에
-  `(user_internal_id, mission_key)` 부분 유니크 인덱스를 걸어서, 같은 미션을 거의 동시에
-  두 번 클레임해도 DB 단에서 하나는 거부되게 했습니다(409로 응답). 앱 레벨의 "이미 클레임했는지"
-  조회만으로는 두 요청이 동시에 통과할 수 있어서 최종 방어선으로 추가했습니다
-  (`app/models/mission_progress.py`, `app/routers/missions/claim_mission.py`).
-  > 기존에 만들어둔 로컬 `home_settings.db`에는 이 인덱스가 자동으로 안 생깁니다
-  > (`create_all`은 없는 테이블만 만들고 기존 테이블은 건드리지 않음). 로컬 DB 파일을
-  > 지우고 다시 띄우거나, 직접 `CREATE UNIQUE INDEX`를 실행해주세요.
+  `(user_internal_id, mission_key)` 부분 유니크 인덱스를, 반복형 미션(`habit_donation`,
+  `steady_heart`, `quick_donation`)은 이번 클레임의 근거가 된 헌혈 기록을 `evidence_id`로 저장해
+  `(user_internal_id, mission_key, evidence_id)` 부분 유니크 인덱스를 걸었습니다. 같은 미션(또는
+  반복형이면 같은 헌혈 기록)을 거의 동시에 두 번 클레임해도 DB 단에서 하나는 거부되게 했습니다
+  (409로 응답). 앱 레벨의 "이미 클레임했는지"/진행도 조회만으로는 두 요청이 동시에 통과할 수 있어서
+  최종 방어선으로 추가했습니다 (`app/models/mission_progress.py`, `app/services/mission_service.py`,
+  `app/routers/missions/claim_mission.py`).
+  > 기존 DB에 이 인덱스들과 `evidence_id` 컬럼을 반영하려면 `alembic upgrade head`를 실행하세요
+  > (위 "DB 스키마 변경(Alembic)" 참고). Alembic 도입 전에 만든 DB 파일이라면 먼저
+  > `alembic stamp <이 인덱스 이전 리비전>`으로 현재 상태를 맞춰줘야 합니다.
 - **쓰기 API에 인메모리 rate limit을 걸었습니다.** `POST /donations`(분당 10회),
   `POST /missions/{key}/claim`(분당 20회) — 단일 프로세스 배포를 가정한 MVP 수준 방어입니다.
   여러 워커/서버로 스케일아웃하면 워커별로 카운트가 따로 세지니, 그땐 Redis 등 공유 저장소

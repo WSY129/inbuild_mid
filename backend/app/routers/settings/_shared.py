@@ -42,3 +42,19 @@ def to_response(settings_row: UserSettings) -> SettingsResponse:
         frequency=settings_row.frequency,
         resend_count=settings_row.resend_count,
     )
+
+
+# GET /settings 조회 전용. get_or_create_settings와 달리 행이 없어도 DB에 만들지 않는다
+# (GET은 읽기만 해야 캐시/재시도/모니터링에서 부작용 없이 예측 가능하다).
+# 기본값은 UserSettings 컬럼 기본값(user_settings.py)과 반드시 같게 유지할 것.
+# 실제 저장은 사용자가 설정을 하나라도 바꿔 PATCH를 호출하는 시점에 get_or_create_settings가 한다.
+def get_settings_response(db: Session, user_internal_id: int) -> SettingsResponse:
+    settings_row = db.get(UserSettings, user_internal_id)
+    if settings_row is None:
+        return SettingsResponse(
+            notification_enabled=True,
+            sensitivity="보통",
+            frequency="3",
+            resend_count=3,
+        )
+    return to_response(settings_row)

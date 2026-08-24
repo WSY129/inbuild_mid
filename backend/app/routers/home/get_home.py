@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, date, timedelta
 #문자열을 날짜로 바꾸기 위해 datetime 모듈 import
@@ -35,7 +36,16 @@ def calculate_next_donation_dday(
     if interval is None:  # "모름", 또는 우리가 모르는 표기
         return "정보 없음"
 
-    last_date = datetime.strptime(donation_date, "%Y-%m-%d").date()
+    # donation_date가 회원가입팀 DB(blood_link.db)에서 그대로 온 값일 수 있어
+    # (donation_records가 하나도 없어 회원가입 정보로 폴백한 경우) "YYYY-MM-DD"가
+    # 아니어도 여기서 막지 못한다. 형식이 깨져도 /home 전체가 500이 되지 않도록
+    # 파싱 실패는 "정보 없음"으로 대체한다.
+    try:
+        last_date = datetime.strptime(donation_date, "%Y-%m-%d").date()
+    except ValueError:
+        logger.warning("donation_date 형식이 올바르지 않아 D-day 계산을 건너뜀: %r", donation_date)
+        return "정보 없음"
+
     next_date = last_date + timedelta(days=interval)
     remaining = (next_date - date.today()).days
 
@@ -76,7 +86,11 @@ async def get_home(
             "next_status": "판정 보류",
         }
 
-    latest_record = get_latest_donation_record(db, user.internal_id)
+    # get_home은 async인데 SQLAlchemy Session 쿼리는 동기라, await 없이 그대로 부르면
+    # 그 쿼리가 끝날 때까지 이벤트 루프 전체가 막힌다 (get_current_user의 회원 DB 조회와
+    # 같은 이유 - app/services/auth.py 참고). 별도 스레드로 돌려서 블로킹을 피한다.
+    # database.py의 SQLite 엔진이 check_same_thread=False로 열려있어 스레드를 옮겨도 안전하다.
+    latest_record = await asyncio.to_thread(get_latest_donation_record, db, user.internal_id)
     if latest_record:
         donation_date = latest_record.donation_date.strftime("%Y-%m-%d")
         donation_method = latest_record.donation_method

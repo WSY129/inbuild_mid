@@ -2,7 +2,7 @@
 from datetime import date
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.services.donation_method import is_recognized_donation_method
 
@@ -36,6 +36,14 @@ class DonationRecordCreate(BaseModel):
             )
         return value
 
+    @field_validator("location_name")
+    @classmethod
+    def strip_location_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("장소명을 입력해주세요.")
+        return value
+
     #헌혈 기록은 '이미 한 헌혈'을 남기는 것이므로 미래 날짜는 받지 않는다.
     #프론트 년/월/일 드롭다운에서 올해 이후를 고를 수 있으면 여기서 422로 걸린다.
     #(막지 않으면 홈 화면 D-day가 아직 하지도 않은 헌혈 기준으로 계산돼버린다)
@@ -46,10 +54,19 @@ class DonationRecordCreate(BaseModel):
             raise ValueError("헌혈일은 오늘 이후 날짜로 입력할 수 없습니다.")
         return value
 
+    #위도만 있고 경도가 없는(또는 반대) 반쪽짜리 좌표는 지도에 찍을 수 없는 쓸모없는 데이터라
+    #저장 전에 막는다 - 좌표는 둘 다 있거나 둘 다 비워야 한다.
+    @model_validator(mode="after")
+    def reject_partial_coordinates(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("위도와 경도는 둘 다 입력하거나 둘 다 비워야 합니다.")
+        return self
+
 
 class DonationRecordResponse(BaseModel):
     id: int
     donation_method: str
+    donation_method_code: str  # DonationMethodCode 값 (WHOLE_BLOOD/PLASMA/PLATELET/PLATELET_PLASMA)
     donation_date: date
     location_name: str
     latitude: Optional[float]

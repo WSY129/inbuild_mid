@@ -17,10 +17,6 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
 
-    # AI팀 혈액 예측 모델 API
-    ai_api_base_url: str = "http://localhost:8002"  # TODO: AI팀 자료 수신 후 실제 주소로 교체
-    ai_api_predict_path: str = "/predict"
-
     # 이 백엔드가 직접 관리하는 로컬 데이터 (알림 설정 등) - blood_link.db와는 별도 파일
     database_url: str = "sqlite:///./home_settings.db"
 

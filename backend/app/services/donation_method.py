@@ -13,11 +13,48 @@ app/schemas/donation_record.py(입력 검증)에서도 같은 판정이 필요�
 (표기가 또 바뀌어도 여기만 보면 되도록 딕셔너리 대신 함수로 뺌 — README TODO 3번 참고,
  표기를 한쪽으로 강제 통일하지 않고 이쪽에서 흡수하기로 한 결정을 유지한다)
 """
+import enum
 from typing import Optional
 
 # PRD 데이터 필드 정의표 기준: 전혈 +60일 / 성분헌혈(혈장·혈소판·혈소판혈장) +14일
 WHOLE_BLOOD_INTERVAL_DAYS = 60
 APHERESIS_INTERVAL_DAYS = 14
+
+
+class DonationMethodCode(str, enum.Enum):
+    """
+    헌혈 방식의 고정 코드. donation_records.donation_method_code에 저장한다.
+
+    donation_records.donation_method(원문 라벨, 와이어프레임/PRD 표기가 섞여 들어옴)는
+    화면 표시용으로 그대로 두고, 집계/판정(미션 all_rounder, 통계 등)은 이 코드로 한다.
+    라벨 표기가 늘어나거나 바뀌어도(오타 포함) 저장된 코드 자체는 4종으로 고정돼 있어서
+    "이 유저가 실제로 어떤 방식들로 헌혈했는가"를 라벨 문자열 비교 없이 판정할 수 있다.
+    """
+    WHOLE_BLOOD = "WHOLE_BLOOD"
+    PLASMA = "PLASMA"
+    PLATELET = "PLATELET"
+    PLATELET_PLASMA = "PLATELET_PLASMA"
+
+
+def resolve_donation_method_code(donation_method: str) -> Optional[DonationMethodCode]:
+    """헌혈 방식 문자열 -> 고정 코드. resolve_donation_interval_days와 같은 키워드 판정을 쓴다
+    (판정 가능한 문자열의 기준을 두 함수가 따로 갖고 있으면 나중에 어긋나기 쉬워서 통일)."""
+    normalized = "".join(donation_method.split())
+
+    if "모름" in normalized:
+        return None
+    if "전혈" in normalized:
+        return DonationMethodCode.WHOLE_BLOOD
+
+    has_platelet = "혈소판" in normalized
+    has_plasma = "혈장" in normalized
+    if has_platelet and has_plasma:
+        return DonationMethodCode.PLATELET_PLASMA
+    if has_platelet:
+        return DonationMethodCode.PLATELET
+    if has_plasma:
+        return DonationMethodCode.PLASMA
+    return None
 
 
 def resolve_donation_interval_days(donation_method: str) -> Optional[int]:
