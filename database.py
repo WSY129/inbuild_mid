@@ -1,7 +1,10 @@
 import sqlite3
 
+DB_NAME = "blood_link.db"
+
 def init_db():
-    conn = sqlite3.connect("blood_link.db")
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -18,3 +21,16 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+
+
+def get_db():
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
