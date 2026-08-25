@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.services.blood_predictor import get_blood_stock_predictions
+from app.services.notification_scheduler import start_scheduler, stop_scheduler
 from app.routers.home import get_home
 from app.routers.settings import (
     get_settings,
@@ -13,6 +15,8 @@ from app.routers.settings import (
     update_sensitivity,
     update_frequency,
     update_resend_count,
+    register_device_token,
+    unregister_device_token,
 )
 from app.routers.donations import get_history, add_history
 from app.routers.missions import get_missions, claim_mission
@@ -22,7 +26,18 @@ from app.routers.missions import get_missions, claim_mission
 # 도입 전 겪었던 문제) 제거했다. 새로 이 프로젝트를 받으면 서버를 띄우기 전에
 # `alembic upgrade head`를 먼저 실행해야 한다 (README "실행 방법" 참고).
 
-app = FastAPI(title="헌혈 예측 알림 서비스 - 홈/설정 API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 예측 기반 '혈액 부족' 알림 배치 스케줄러 (app/services/notification_scheduler.py).
+    # FCM_CREDENTIALS_PATH가 아직 없어도 스케줄러 자체는 정상 기동한다 - 실제 발송 시점에만
+    # PushNotConfiguredError로 실패하고 배치는 계속 돈다 (app/services/notification_batch.py).
+    start_scheduler()
+    yield
+    stop_scheduler()
+
+
+app = FastAPI(title="헌혈 예측 알림 서비스 - 홈/설정 API", lifespan=lifespan)
 
 # CORS: 프론트(다른 출처)에서 이 백엔드를 호출할 수 있게 허용.
 # 이게 없으면 브라우저가 preflight(OPTIONS) 단계에서 요청을 차단한다.
@@ -51,6 +66,8 @@ app.include_router(update_notification_toggle.router)
 app.include_router(update_sensitivity.router)
 app.include_router(update_frequency.router)
 app.include_router(update_resend_count.router)
+app.include_router(register_device_token.router)
+app.include_router(unregister_device_token.router)
 app.include_router(get_history.router)
 app.include_router(add_history.router)
 app.include_router(get_missions.router)

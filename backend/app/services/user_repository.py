@@ -50,3 +50,33 @@ def get_user_by_id(user_id: str) -> Optional[SignupUser]:
         donationDate=row["last_donation_date"],
         donationMethod=row["last_donation_method"],
     )
+
+
+def get_user_by_internal_id(internal_id: int) -> Optional[SignupUser]:
+    """
+    예측 기반 알림 배치(app/services/notification_batch.py)용. 그 배치는 요청 컨텍스트가 없어
+    로그인 아이디가 아니라 우리 쪽 DB(user_settings, device_tokens)에 저장된 user_internal_id에서
+    출발하므로, get_user_by_id(로그인 아이디 기준)가 아니라 이 함수로 조회한다.
+    """
+    conn = sqlite3.connect(f"file:{settings.shared_db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE id = ?", (internal_id,))
+        row = cursor.fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        return None
+
+    return SignupUser(
+        internal_id=row["id"],
+        id=row["user_id"],
+        nickname=row["nickname"],
+        bloodType=row["blood_type_abo"],
+        rhType=row["rh_type"],
+        birthdate=row["birth_date"],
+        donationDate=row["last_donation_date"],
+        donationMethod=row["last_donation_method"],
+    )

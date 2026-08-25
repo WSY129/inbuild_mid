@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     # 이 백엔드가 직접 관리하는 로컬 데이터 (알림 설정 등) - blood_link.db와는 별도 파일
     database_url: str = "sqlite:///./home_settings.db"
 
+    # 실제 푸시 발송(FCM)에 쓰는 Firebase 서비스 계정 키 JSON 파일 경로.
+    # 비워두면 발송 시도 시 PushNotConfiguredError로 실패한다 (app/services/push_client.py).
+    # 앱 기동 자체는 막지 않는다 - 이 키가 아직 없어도 나머지 API는 정상 동작해야 하므로.
+    fcm_credentials_path: str = ""
+
+    # 예측 기반 알림 배치(app/services/notification_scheduler.py)를 매일 실행할 시각(0~23, 서버 로컬 시간).
+    notification_batch_hour: int = 9
+
     # FastAPI의 Pydantic 모델이 .env 파일을 읽도록 설정
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

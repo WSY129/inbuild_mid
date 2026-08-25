@@ -6,6 +6,8 @@ pydantic
 pydantic-settings
 python-dotenv
 pyjwt   # 회원가입팀이 발급한 accessToken 검증용 (그쪽도 같은 라이브러리를 쓴다)
+firebase-admin  # 실제 푸시 발송(FCM) - app/services/push_client.py
+apscheduler     # 예측 기반 알림 배치를 매일 실행 - app/services/notification_scheduler.py
 # 예측 모델 의존성 (AI팀 handover-2/requirements.txt와 동일).
 # 이전 전달본의 statsmodels/scipy는 더 이상 쓰지 않는다. 모델이 달력 회귀 최소제곱
 # 닫힌 해로 바뀌어 반복 최적화가 없고, 같은 입력이면 라이브러리 버전과 무관하게 같은

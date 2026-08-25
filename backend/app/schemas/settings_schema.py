@@ -27,3 +27,8 @@ class FrequencyUpdateRequest(BaseModel):
 
 class ResendCountUpdateRequest(BaseModel):
     resend_count: int = Field(ge=1, le=5)
+
+
+class DeviceTokenRequest(BaseModel):
+    token: str = Field(min_length=1)
+    platform: Optional[Literal["ios", "android", "web"]] = None

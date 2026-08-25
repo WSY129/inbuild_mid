@@ -50,7 +50,9 @@ backend/
 │       │   ├── update_notification_toggle.py # [버튼: 전체 알림 수신 토글] PATCH /settings/notification
 │       │   ├── update_sensitivity.py         # [버튼: 알림 민감도 드롭다운] PATCH /settings/sensitivity
 │       │   ├── update_frequency.py           # [버튼: 알람 수신 주기 드롭다운] PATCH /settings/frequency
-│       │   └── update_resend_count.py        # [버튼: 재수신 횟수 드롭다운] PATCH /settings/resend-count
+│       │   ├── update_resend_count.py        # [버튼: 재수신 횟수 드롭다운] PATCH /settings/resend-count
+│       │   ├── register_device_token.py      # [로그인 직후] POST /settings/device-token (FCM 토큰 등록)
+│       │   └── unregister_device_token.py    # [로그아웃 시] DELETE /settings/device-token (FCM 토큰 해제)
 │       ├── donations/
 │       │   ├── _shared.py                   # 버튼 파일들이 공유하는 헬퍼 (라우터 아님)
 │       │   ├── get_history.py                # [버튼: 헌혈 내역 조회 화면 진입] GET /donations
@@ -175,6 +177,42 @@ Authorization: Bearer <accessToken>
   동시에 insert를 시도해도, 뒤에 커밋 실패한 쪽은 방금 만들어진 행을 다시 읽어옵니다
   (`app/routers/settings/_shared.py`).
 
+## 실제 푸시 발송 (FCM)
+
+이전에는 이 백엔드가 "알림 켜짐/꺼짐" 설정값만 저장하고, 실제 발송(FCM/APNs 서버 호출)은
+없었습니다. 서버 키를 클라이언트에 둘 수 없어 발송 자체는 프론트가 아니라 이 백엔드가
+담당해야 하므로, 아래 세 가지를 추가했습니다.
+
+1. **디바이스 토큰 등록/해제** — 프론트가 Firebase SDK로 발급받은 FCM 토큰을 로그인 직후
+   `POST /settings/device-token`으로 등록하고, 로그아웃 시 `DELETE /settings/device-token`으로
+   해제합니다 (`app/models/device_token.py`, `app/routers/settings/register_device_token.py`,
+   `unregister_device_token.py`). 한 유저가 여러 기기를 등록할 수 있고, 같은 토큰으로 다른
+   유저가 다시 등록하면(기기 재사용) 소유자를 갱신하는 upsert로 처리합니다.
+2. **FCM 발송 클라이언트** — `app/services/push_client.py`가 `firebase-admin` SDK를 얇게
+   감쌉니다. `.env`의 `FCM_CREDENTIALS_PATH`(Firebase 서비스 계정 키 JSON 경로, 저장소에
+   커밋 금지)가 비어있으면 발송 시점에 `PushNotConfiguredError`만 던지고 나머지 기능(배치
+   포함)은 정상 동작합니다 — 키를 아직 발급받지 못한 로컬 개발 환경에서도 서버가 죽지 않게
+   하기 위함입니다.
+3. **예측 기반 알림 배치** — `app/services/notification_batch.py` + `notification_scheduler.py`.
+   매일(`NOTIFICATION_BATCH_HOUR`, 기본 9시) 알림을 켜둔 전체 유저를 훑어서, 각자의
+   `sensitivity`/`frequency`/`resend_count` 설정에 맞춰 "혈액 부족 조짐" 푸시를 보낼지
+   판단합니다. rate_limit.py/blood_predictor.py와 같은 이유로 별도 워커 없이 앱 프로세스
+   안에서 APScheduler로 돌리는 단일 프로세스 배포 가정입니다 — 여러 워커로 스케일아웃하면
+   배치가 중복 실행되니 그 전에 외부 스케줄러나 단일 워커 실행 방식으로 바꿔야 합니다.
+
+   ⚠️ **PRD/엑셀 정의표에 없어서 이 배치가 임의로 정한 가정** (기획 확정되면 교체할 것,
+   `app/services/notification_batch.py` 상단 docstring 참고):
+   - 경보 판정 신호는 위험단계(관심/주의/경계/심각)가 아니라 `alert_signal`입니다.
+     위험단계 판정은 AI팀 일일소요량 자료 대기 중이라 아직 "판정 보류"이기 때문입니다
+     (아래 TODO 2번 참고). `predicted_volumes`가 `alert_signal` 이하로 떨어지는 날이
+     예측 구간 안에 있으면 "부족 조짐"으로 봅니다.
+   - `sensitivity`는 몇 일짜리 구간을 볼지로 해석했습니다: 민감=21일 / 보통=14일 / 둔함=7일
+     (AI팀 정확도 구간 - 1~7일 운영판단, 8~21일 경보발동, 22~28일 참고용 - 기준).
+   - `resend_count`는 "최초 발송 이후 추가로 재수신하는 횟수"로 해석했습니다. 즉 경보 하나당
+     최대 발송 횟수 = 1(최초) + resend_count이고, `frequency`(일)마다 한 번씩 재발송합니다.
+     `frequency == "재수신하지않음"`이면 최초 1건만 보냅니다.
+   - 경보가 풀렸다가(예측이 회복) 다시 나빠지면 새 경보로 취급해 재수신 횟수를 리셋합니다.
+
 ## 지금 남아있는 TODO
 
 1. ~~**인증을 토큰 기반으로 전환**~~ — 완료. 회원가입팀이 JWT 발급을 붙였고, 이 백엔드도 검증으로 교체했습니다.
@@ -231,3 +269,6 @@ Authorization: Bearer <accessToken>
      `PRAGMA journal_mode=WAL` 적용을 회원가입팀과 협의할 것
    - `rate_limit.py`는 단일 프로세스 기준입니다. 배포를 여러 인스턴스로 늘릴 계획이 있다면
      그 전에 공유 저장소 기반으로 교체할 것.
+   - 실제 배포 전에 `FCM_CREDENTIALS_PATH`에 Firebase 서비스 계정 키를 넣어야 푸시가 실제로
+     나갑니다. 키가 없으면 알림 배치는 매일 돌지만 발송은 건너뛰고 경고 로그만 남깁니다
+     (`app/services/push_client.py`).

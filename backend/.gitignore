@@ -7,6 +7,11 @@
 # (gitignore는 줄 끝 주석을 지원하지 않으므로 패턴과 같은 줄에 쓰지 말 것)
 !.env.example
 
+# Firebase 콘솔에서 발급받는 서비스 계정 키 (FCM 실제 발송용, FCM_CREDENTIALS_PATH가 가리키는 파일).
+# 이 키가 유출되면 우리 프로젝트 이름으로 아무 기기에나 푸시를 보낼 수 있다.
+firebase-service-account*.json
+*serviceAccountKey*.json
+
 # ── 개인정보가 든 DB ────────────────────────────────────
 # blood_link.db: 회원가입팀 실제 사용자 데이터 (닉네임/생년월일/혈액형/헌혈이력)
 # home_settings.db: 이 백엔드의 사용자별 알림 설정
